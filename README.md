@@ -6,6 +6,7 @@ import "github.com/ceylanomer/n1qlizer"
 
 **n1qlizer** is a fluent query builder for Couchbase's N1QL language, inspired by [Squirrel](https://github.com/Masterminds/squirrel). n1qlizer helps you build N1QL queries from composable parts.
 
+
 ## Usage
 
 ```go
