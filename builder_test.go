@@ -62,7 +62,7 @@ func TestBuilder(t *testing.T) {
 }
 
 func TestBuilderDelete(t *testing.T) {
-	b := Delete(FooBuilder.X(1), "X")
+	b := Remove(FooBuilder.X(1), "X")
 	_, ok := Get(b, "X")
 	if ok {
 		t.Fatalf("key %v not deleted", "X")

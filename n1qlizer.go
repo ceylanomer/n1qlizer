@@ -247,3 +247,38 @@ func (b StatementBuilderType) RunWithContext(runner QueryRunnerContext) Statemen
 // StatementBuilder is a parent builder for other statement builders.
 var Question = questionFormat{}
 var StatementBuilder = StatementBuilderType(EmptyBuilder).PlaceholderFormat(Question)
+
+// Select returns a new SelectBuilder, optionally setting some result columns.
+//
+// See SelectBuilder.Columns.
+func Select(columns ...string) SelectBuilder {
+	return StatementBuilder.Select(columns...)
+}
+
+// Insert returns a new InsertBuilder with the given table name.
+//
+// See InsertBuilder.Into.
+func Insert(into string) InsertBuilder {
+	return StatementBuilder.Insert(into)
+}
+
+// Upsert returns a new UpsertBuilder with the given table name.
+//
+// See UpsertBuilder.Into.
+func Upsert(into string) UpsertBuilder {
+	return StatementBuilder.Upsert(into)
+}
+
+// Update returns a new UpdateBuilder with the given table name.
+//
+// See UpdateBuilder.Table.
+func Update(table string) UpdateBuilder {
+	return StatementBuilder.Update(table)
+}
+
+// Delete returns a new DeleteBuilder with the given table name.
+//
+// See DeleteBuilder.Table.
+func Delete(from string) DeleteBuilder {
+	return StatementBuilder.Delete(from)
+}

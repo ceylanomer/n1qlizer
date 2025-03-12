@@ -42,8 +42,8 @@ func Set(builder interface{}, name string, v interface{}) interface{} {
 	return convert(b, builder)
 }
 
-// Delete returns a copy of the given builder with the given named value unset.
-func Delete(builder interface{}, name string) interface{} {
+// Remove returns a copy of the given builder with the given named value unset.
+func Remove(builder interface{}, name string) interface{} {
 	b := Builder{getBuilderMap(builder).Delete(name)}
 	return convert(b, builder)
 }
