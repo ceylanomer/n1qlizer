@@ -21,27 +21,27 @@ var (
 	BuilderMux sync.RWMutex
 )
 
-// RegisterBuilderType, bir Builder tipini ve karşılık gelen struct tipini kaydeder.
-// Bu eşleme, Get tarafından döndürülen dilimin tipini etkiler ve
-// GetStruct'ın çalışması için gereklidir.
+// RegisterBuilderType registers a Builder type and its corresponding struct type.
+// This mapping affects the type of slices returned by Get and is required for
+// GetStruct to work.
 //
-// Kayıtlı builderType'ın bir örneğini içeren bir Value döndürür.
+// Returns a Value containing an instance of the registered builderType.
 //
-// RegisterBuilderType, builderType'ın temel tipi Builder değilse veya
-// structType'ın Kind'ı Struct değilse panik yapar.
+// RegisterBuilderType will panic if builderType's underlying type is not Builder or
+// if structType's Kind is not Struct.
 func RegisterBuilderType(builderType reflect.Type, structType reflect.Type) *reflect.Value {
 	BuilderMux.Lock()
 	defer BuilderMux.Unlock()
-	structType.NumField() // Struct değilse panik
+	structType.NumField() // Panics if not a struct
 	BuilderTypes[builderType] = structType
 	emptyValue := reflect.ValueOf(EmptyBuilder).Convert(builderType)
 	return &emptyValue
 }
 
-// RegisterBuilder, RegisterBuilderType'ı sarar, tip yerine örnekler alır.
+// RegisterBuilder wraps RegisterBuilderType, taking instances instead of types.
 //
-// Kayıtlı builder tipinin boş bir örneğini döndürür, bu
-// builder ifadeleri için başlangıç değeri olarak kullanılabilir. Örneğe bakınız.
+// Returns an empty instance of the registered builder type, which can be used
+// as the initial value for builder expressions. See example.
 func RegisterBuilder(builderProto any, structProto any) any {
 	empty := RegisterBuilderType(
 		reflect.TypeOf(builderProto),
@@ -50,7 +50,7 @@ func RegisterBuilder(builderProto any, structProto any) any {
 	return empty
 }
 
-// GetBuilderStructType, verilen bir builder tipi için kayıtlı struct tipini döndürür
+// GetBuilderStructType returns the registered struct type for a given builder type
 func GetBuilderStructType(builderType reflect.Type) reflect.Type {
 	BuilderMux.RLock()
 	defer BuilderMux.RUnlock()
@@ -61,8 +61,8 @@ func GetBuilderStructType(builderType reflect.Type) reflect.Type {
 	return structType
 }
 
-// NewBuilderStruct, verilen Builder tipi ile ilişkilendirilmiş struct tipinde
-// yeni bir değer döndürür.
+// NewBuilderStruct returns a new value with the same type as a struct associated
+// with the given Builder type.
 func NewBuilderStruct(builderType reflect.Type) *reflect.Value {
 	structType := GetBuilderStructType(builderType)
 	if structType == nil {

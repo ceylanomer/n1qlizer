@@ -4,8 +4,8 @@ import (
 	"reflect"
 )
 
-// DEPRECATED: Bu dosya eski kod ile uyumluluk için korunmuştur.
-// Yeni kodlar registry_impl.go dosyasındaki fonksiyonları kullanmalıdır.
+// DEPRECATED: This file is maintained for compatibility with older code.
+// New code should use the functions in registry_impl.go.
 
 // RegisterType maps the given builderType to a structType.
 // This mapping affects the type of slices returned by Get and is required for

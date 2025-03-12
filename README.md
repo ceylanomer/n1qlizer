@@ -4,7 +4,7 @@
 
 ## Overview
 
-**n1qlizer** is a fluent query builder for Couchbase's N1QL language, inspired by [Squirrel](https://github.com/Masterminds/squirrel). It helps you build N1QL queries from composable parts using a clean, readable syntax.
+**n1qlizer** is a fluent query builder for Couchbase's N1QL language, inspired by [Squirrel](https://pkg.go.dev/github.com/Masterminds/squirrel). It helps you build N1QL queries from composable parts using a clean, readable syntax.
 
 Instead of concatenating strings or using complex template engines, n1qlizer lets you build queries programmatically, making them more maintainable and less error-prone. It handles parameter placeholders, escaping, and query composition while providing Couchbase-specific features not found in standard SQL builders.
 
@@ -272,27 +272,116 @@ arr := n1qlizer.JSONArray("value1", "value2", 3)
 obj := n1qlizer.JSONObject("name", "John", "age", 30)
 ```
 
-## Executing Queries
+### Executing Queries
 
-n1qlizer can execute queries directly with a Couchbase connection:
+To execute queries directly with Couchbase SDK, you need to implement the QueryRunner interface:
 
 ```go
-// Create a builder with a Couchbase connection
-sb := n1qlizer.StatementBuilder.RunWith(couchbaseCluster)
+import (
+	"reflect"
 
-// Build and execute the query in one step
-result, err := sb.Select("*").
-    From("users").
-    Where(n1qlizer.Eq{"status": "active"}).
-    Execute()
+	"github.com/ceylanomer/n1qlizer"
+	"github.com/couchbase/gocb/v2"
+)
 
-// Process results
-for result.Next() {
-    var user User
-    if err := result.Row(&user); err != nil {
-        // Handle error
+type CouchbaseRunner struct {
+	cluster *gocb.Cluster
+}
+
+func (r *CouchbaseRunner) Execute(query string, args ...interface{}) (n1qlizer.QueryResult, error) {
+	// Execute the query using the Couchbase SDK
+	result, err := r.cluster.Query(query, &gocb.QueryOptions{
+		PositionalParameters: args,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &CouchbaseQueryResult{result}, nil
+}
+
+// Implement the QueryResult interface
+type CouchbaseQueryResult struct {
+	result *gocb.QueryResult
+}
+
+func (r *CouchbaseQueryResult) One(valuePtr any) error {
+	return r.result.One(valuePtr)
+}
+
+func (r *CouchbaseQueryResult) All(slicePtr any) error {
+	// Get the value that slicePtr points to
+	sliceVal := reflect.ValueOf(slicePtr).Elem()
+
+	// Get the element type of the slice
+	elemType := sliceVal.Type().Elem()
+
+	// Create a new slice to hold the results
+	results := reflect.MakeSlice(sliceVal.Type(), 0, 0)
+
+	// Iterate through the query results
+	for r.result.Next() {
+		// Create a new element of the appropriate type
+		elemPtr := reflect.New(elemType).Interface()
+
+		// Scan the current row into the element
+		if err := r.result.Row(elemPtr); err != nil {
+			return err
+		}
+
+		// Append the element to our results slice
+		results = reflect.Append(results, reflect.ValueOf(elemPtr).Elem())
+	}
+
+	// Check if there was an error during iteration
+	if err := r.result.Err(); err != nil {
+		return err
+	}
+
+	// Set the slice value to our results
+	sliceVal.Set(results)
+	return nil
+}
+
+func (r *CouchbaseQueryResult) Close() error {
+	return r.result.Close()
+}
+
+
+// Usage with runner
+func main() {
+    // Set up your Couchbase cluster and create a runner
+    cluster, err := gocb.Connect("couchbase://localhost", gocb.ClusterOptions{
+        Username: "Administrator",
+        Password: "password",
+    })
+    if err != nil {
+        panic(err)
     }
-    // Use user...
+    
+    runner := &CouchbaseRunner{cluster: cluster}
+    
+    // Build and execute a query
+    result, err := n1qlizer.
+        Select("*").
+        From("users").
+        Where(n1qlizer.Eq{"type": "admin"}).
+        RunWith(runner).
+        Execute()
+    
+    if err != nil {
+        panic(err)
+    }
+    
+    // Process results
+    var adminUsers []interface{}
+    err = result.All(&adminUsers)
+    if err != nil {
+        panic(err)
+    }
+    
+    // Do something with adminUsers
+    fmt.Printf("Found %d admin users\n", len(adminUsers))
 }
 ```
 
