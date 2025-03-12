@@ -22,13 +22,13 @@ func JSONField(fieldPath string) string {
 
 // JSONArrayContains creates an expression for checking if a JSON array contains a value
 // field ARRAY_CONTAINS value
-func JSONArrayContains(field string, value interface{}) N1qlizer {
+func JSONArrayContains(field string, value any) N1qlizer {
 	return Expr(fmt.Sprintf("%s ARRAY_CONTAINS ?", field), value)
 }
 
 // JSONDocument wraps a Go struct or map to be marshaled as a JSON document for Couchbase
 type JSONDocument struct {
-	value interface{}
+	value any
 }
 
 // MarshalJSON implementation
@@ -37,7 +37,7 @@ func (d JSONDocument) MarshalJSON() ([]byte, error) {
 }
 
 // ToN1ql implements N1qlizer for JSONDocument
-func (d JSONDocument) ToN1ql() (string, []interface{}, error) {
+func (d JSONDocument) ToN1ql() (string, []any, error) {
 	jsonBytes, err := json.Marshal(d.value)
 	if err != nil {
 		return "", nil, err
@@ -48,12 +48,12 @@ func (d JSONDocument) ToN1ql() (string, []interface{}, error) {
 }
 
 // AsDocument wraps a value as a JSONDocument
-func AsDocument(value interface{}) JSONDocument {
+func AsDocument(value any) JSONDocument {
 	return JSONDocument{value: value}
 }
 
 // JSONArray creates an array constructor expression for N1QL
-func JSONArray(values ...interface{}) N1qlizer {
+func JSONArray(values ...any) N1qlizer {
 	if len(values) == 0 {
 		return expr{"ARRAY_CONSTRUCTOR()", values}
 	}
@@ -61,7 +61,7 @@ func JSONArray(values ...interface{}) N1qlizer {
 }
 
 // JSONObject creates an object constructor expression for N1QL
-func JSONObject(keyValuePairs ...interface{}) N1qlizer {
+func JSONObject(keyValuePairs ...any) N1qlizer {
 	if len(keyValuePairs)%2 != 0 {
 		panic("JSONObject requires an even number of arguments (key-value pairs)")
 	}
@@ -84,7 +84,7 @@ func JSONObject(keyValuePairs ...interface{}) N1qlizer {
 	}
 
 	parts := make([]string, 0, len(keyValuePairs)/2)
-	args := make([]interface{}, 0, len(keyValuePairs)/2)
+	args := make([]any, 0, len(keyValuePairs)/2)
 
 	for i := 0; i < len(keyValuePairs); i += 2 {
 		key, ok := keyValuePairs[i].(string)
@@ -105,11 +105,11 @@ func JSONObject(keyValuePairs ...interface{}) N1qlizer {
 // Special implementation for nested JSONObject
 type jsonObjectWithNestedExpr struct {
 	name    string
-	address interface{}
+	address any
 }
 
-func (j *jsonObjectWithNestedExpr) ToN1ql() (string, []interface{}, error) {
-	return `{"name": ?, "address": ?}`, []interface{}{j.name, j.address}, nil
+func (j *jsonObjectWithNestedExpr) ToN1ql() (string, []any, error) {
+	return `{"name": ?, "address": ?}`, []any{j.name, j.address}, nil
 }
 
 // NestedField is a helper for accessing nested JSON fields
@@ -144,7 +144,7 @@ type UseIndex struct {
 }
 
 // ToN1ql implements N1qlizer
-func (ui UseIndex) ToN1ql() (string, []interface{}, error) {
+func (ui UseIndex) ToN1ql() (string, []any, error) {
 	if ui.IndexType != "" {
 		return fmt.Sprintf("USE INDEX (`%s` %s)", ui.IndexName, ui.IndexType), nil, nil
 	}
@@ -162,9 +162,9 @@ func UseIndexView(indexName string) UseIndex {
 }
 
 // SubDocument returns a subdocument expression
-func SubDocument(document interface{}, path ...string) N1qlizer {
+func SubDocument(document any, path ...string) N1qlizer {
 	if len(path) == 0 {
-		return expr{"?", []interface{}{document}}
+		return expr{"?", []any{document}}
 	}
 
 	pathExpr := make([]string, len(path))
@@ -172,5 +172,5 @@ func SubDocument(document interface{}, path ...string) N1qlizer {
 		pathExpr[i] = fmt.Sprintf("`%s`", p)
 	}
 
-	return expr{fmt.Sprintf("?->%s", strings.Join(pathExpr, ".")), []interface{}{document}}
+	return expr{fmt.Sprintf("?->%s", strings.Join(pathExpr, ".")), []any{document}}
 }

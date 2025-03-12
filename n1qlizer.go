@@ -14,26 +14,26 @@ import (
 // ToN1ql returns a N1QL representation of the N1qlizer, along with a slice of args
 // as passed to Couchbase SDK. It can also return an error.
 type N1qlizer interface {
-	ToN1ql() (string, []interface{}, error)
+	ToN1ql() (string, []any, error)
 }
 
 // rawN1qlizer is expected to do what N1qlizer does, but without finalizing placeholders.
 // This is useful for nested queries.
 type rawN1qlizer interface {
-	toN1qlRaw() (string, []interface{}, error)
+	toN1qlRaw() (string, []any, error)
 }
 
 // QueryExecutor is the interface that wraps the Execute method.
 //
 // Execute executes the given N1QL query as implemented by Couchbase SDK.
 type QueryExecutor interface {
-	Execute(query string, args ...interface{}) (QueryResult, error)
+	Execute(query string, args ...any) (QueryResult, error)
 }
 
 // QueryResult represents the result of a N1QL query
 type QueryResult interface {
-	One(valuePtr interface{}) error
-	All(slicePtr interface{}) error
+	One(valuePtr any) error
+	All(slicePtr any) error
 	Close() error
 }
 
@@ -175,7 +175,7 @@ func replacePositionalPlaceholders(sql, prefix string) (string, error) {
 var RunnerNotSet = fmt.Errorf("cannot run; no Runner set (RunWith)")
 
 // buildClauses is a helper function to build query clauses.
-func buildClauses(parts []N1qlizer, sql *bytes.Buffer, sep string, args []interface{}) ([]interface{}, error) {
+func buildClauses(parts []N1qlizer, sql *bytes.Buffer, sep string, args []any) ([]any, error) {
 	for i, p := range parts {
 		partSQL, partArgs, err := p.ToN1ql()
 		if err != nil {
@@ -229,19 +229,25 @@ func (b StatementBuilderType) AnalyticsSelect(columns ...string) AnalyticsSelect
 
 // PlaceholderFormat sets the PlaceholderFormat for this StatementBuilderType.
 func (b StatementBuilderType) PlaceholderFormat(f PlaceholderFormat) StatementBuilderType {
-	return Set(b, "PlaceholderFormat", f).(StatementBuilderType)
+	// Use generics to set the placeholder format
+	newB := Set[StatementBuilderType, PlaceholderFormat](b, "PlaceholderFormat", f)
+	return newB
 }
 
 // RunWith sets the QueryRunner that this StatementBuilderType should execute
 // queries with.
 func (b StatementBuilderType) RunWith(runner QueryRunner) StatementBuilderType {
-	return Set(b, "RunWith", runner).(StatementBuilderType)
+	// Use generics to set the runner
+	newB := Set[StatementBuilderType, QueryRunner](b, "RunWith", runner)
+	return newB
 }
 
 // RunWithContext sets the QueryRunnerContext that this StatementBuilderType should execute
 // queries with context support.
 func (b StatementBuilderType) RunWithContext(runner QueryRunnerContext) StatementBuilderType {
-	return Set(b, "RunWith", runner).(StatementBuilderType)
+	// Use generics to set the runner
+	newB := Set[StatementBuilderType, QueryRunnerContext](b, "RunWith", runner)
+	return newB
 }
 
 // StatementBuilder is a parent builder for other statement builders.

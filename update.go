@@ -12,7 +12,7 @@ type updateData struct {
 	RunWith           QueryRunner
 	Prefixes          []N1qlizer
 	Table             string
-	SetClauses        map[string]interface{}
+	SetClauses        map[string]any
 	WhereParts        []N1qlizer
 	UseKeys           string
 	Limit             string
@@ -20,7 +20,7 @@ type updateData struct {
 	Suffixes          []N1qlizer
 }
 
-func (d *updateData) ToN1ql() (sqlStr string, args []interface{}, err error) {
+func (d *updateData) ToN1ql() (sqlStr string, args []any, err error) {
 	sqlStr, args, err = d.toN1qlRaw()
 	if err != nil {
 		return
@@ -30,7 +30,7 @@ func (d *updateData) ToN1ql() (sqlStr string, args []interface{}, err error) {
 	return
 }
 
-func (d *updateData) toN1qlRaw() (sqlStr string, args []interface{}, err error) {
+func (d *updateData) toN1qlRaw() (sqlStr string, args []any, err error) {
 	if len(d.Table) == 0 {
 		err = fmt.Errorf("update statements must specify a table")
 		return
@@ -61,31 +61,30 @@ func (d *updateData) toN1qlRaw() (sqlStr string, args []interface{}, err error) 
 
 	sql.WriteString(" SET ")
 
-	// Sort keys for deterministic output
-	keys := make([]string, 0, len(d.SetClauses))
-	for key := range d.SetClauses {
-		keys = append(keys, key)
+	// Sort the set clauses to ensure consistent output ordering
+	setSql := make([]string, 0, len(d.SetClauses))
+	for col := range d.SetClauses {
+		setSql = append(setSql, col)
 	}
-	sort.Strings(keys)
+	sort.Strings(setSql)
 
-	for i, key := range keys {
+	for i, col := range setSql {
 		if i > 0 {
 			sql.WriteString(", ")
 		}
+		sql.WriteString(col)
+		sql.WriteString(" = ")
 
-		value := d.SetClauses[key]
+		value := d.SetClauses[col]
 		if n1ql, ok := value.(N1qlizer); ok {
 			vsql, vargs, err := n1ql.ToN1ql()
 			if err != nil {
 				return "", nil, err
 			}
-			sql.WriteString(key)
-			sql.WriteString(" = ")
 			sql.WriteString(vsql)
 			args = append(args, vargs...)
 		} else {
-			sql.WriteString(key)
-			sql.WriteString(" = ?")
+			sql.WriteString("?")
 			args = append(args, value)
 		}
 	}
@@ -120,47 +119,43 @@ func (d *updateData) toN1qlRaw() (sqlStr string, args []interface{}, err error) 
 	return
 }
 
-// UpdateBuilder builds SQL UPDATE statements.
+// UpdateBuilder builds UPDATE statements.
 type UpdateBuilder Builder
 
 func init() {
 	Register(UpdateBuilder{}, updateData{})
 }
 
-// PlaceholderFormat sets PlaceholderFormat (e.g. Dollar) for the query.
+// PlaceholderFormat sets PlaceholderFormat (e.g. Question or Dollar) for the
+// query.
 func (b UpdateBuilder) PlaceholderFormat(f PlaceholderFormat) UpdateBuilder {
-	return Set(b, "PlaceholderFormat", f).(UpdateBuilder)
+	return Set[UpdateBuilder, PlaceholderFormat](b, "PlaceholderFormat", f)
 }
 
-// RunWith sets a Runner (like Couchbase DB connection) to be used with e.g. Execute.
+// RunWith sets a Runner (like a Couchbase DB connection) to be used with e.g. Execute.
 func (b UpdateBuilder) RunWith(runner QueryRunner) UpdateBuilder {
-	return Set(b, "RunWith", runner).(UpdateBuilder)
+	return Set[UpdateBuilder, QueryRunner](b, "RunWith", runner)
 }
 
-// Execute builds and sends the query to the runner set by RunWith.
+// Execute builds and executes the query.
 func (b UpdateBuilder) Execute() (QueryResult, error) {
 	data := GetStruct(b).(updateData)
-
 	if data.RunWith == nil {
 		return nil, RunnerNotSet
 	}
-
-	query, args, err := data.ToN1ql()
-	if err != nil {
-		return nil, err
-	}
-
-	return data.RunWith.Execute(query, args...)
+	return ExecuteWith(data.RunWith, b)
 }
 
-// ToN1ql builds the query into a N1QL string and args.
-func (b UpdateBuilder) ToN1ql() (string, []interface{}, error) {
+// ToN1ql builds the query into a N1QL string and bound args.
+func (b UpdateBuilder) ToN1ql() (string, []any, error) {
 	data := GetStruct(b).(updateData)
 	return data.ToN1ql()
 }
 
-// MustN1ql builds the query into a N1QL string and args, and panics on error.
-func (b UpdateBuilder) MustN1ql() (string, []interface{}) {
+// MustN1ql builds the query into a N1QL string and bound args.
+//
+// MustN1ql panics if there are any errors.
+func (b UpdateBuilder) MustN1ql() (string, []any) {
 	sql, args, err := b.ToN1ql()
 	if err != nil {
 		panic(err)
@@ -168,74 +163,69 @@ func (b UpdateBuilder) MustN1ql() (string, []interface{}) {
 	return sql, args
 }
 
-// Prefix adds an expression to the beginning of the query.
-func (b UpdateBuilder) Prefix(sql string, args ...interface{}) UpdateBuilder {
+// Prefix adds an expression to the beginning of the query
+func (b UpdateBuilder) Prefix(sql string, args ...any) UpdateBuilder {
 	return b.PrefixExpr(Expr(sql, args...))
 }
 
-// PrefixExpr adds an expression to the beginning of the query.
+// PrefixExpr adds an expression to the beginning of the query
 func (b UpdateBuilder) PrefixExpr(expr N1qlizer) UpdateBuilder {
-	return Append(b, "Prefixes", expr).(UpdateBuilder)
+	return Append[UpdateBuilder, N1qlizer](b, "Prefixes", expr)
 }
 
 // Table sets the table to be updated.
 func (b UpdateBuilder) Table(table string) UpdateBuilder {
-	return Set(b, "Table", table).(UpdateBuilder)
+	return Set[UpdateBuilder, string](b, "Table", table)
 }
 
 // UseKeys sets the USE KEYS clause of the query.
 func (b UpdateBuilder) UseKeys(keys string) UpdateBuilder {
-	return Set(b, "UseKeys", keys).(UpdateBuilder)
+	return Set[UpdateBuilder, string](b, "UseKeys", keys)
 }
 
 // Set adds SET clauses to the query.
-func (b UpdateBuilder) Set(column string, value interface{}) UpdateBuilder {
-	if GetStruct(b).(updateData).SetClauses == nil {
-		return Set(b, "SetClauses", map[string]interface{}{
-			column: value,
-		}).(UpdateBuilder)
-	}
-
+func (b UpdateBuilder) Set(column string, value any) UpdateBuilder {
 	data := GetStruct(b).(updateData)
+	if data.SetClauses == nil {
+		data.SetClauses = make(map[string]any)
+	}
 	data.SetClauses[column] = value
-	return Set(b, "SetClauses", data.SetClauses).(UpdateBuilder)
+	return Set[UpdateBuilder, map[string]any](b, "SetClauses", data.SetClauses)
 }
 
-// SetMap adds SET clauses to the query from a map.
-func (b UpdateBuilder) SetMap(clauses map[string]interface{}) UpdateBuilder {
-	// Merges with existing set clauses
-	if GetStruct(b).(updateData).SetClauses == nil {
-		return Set(b, "SetClauses", clauses).(UpdateBuilder)
-	}
-
+// SetMap is a convenience method which calls .Set for each key/value pair in clauses.
+func (b UpdateBuilder) SetMap(clauses map[string]any) UpdateBuilder {
 	data := GetStruct(b).(updateData)
-	for key, value := range clauses {
-		data.SetClauses[key] = value
+	if data.SetClauses == nil {
+		data.SetClauses = make(map[string]any)
 	}
-	return Set(b, "SetClauses", data.SetClauses).(UpdateBuilder)
+	for k, v := range clauses {
+		data.SetClauses[k] = v
+	}
+	return Set[UpdateBuilder, map[string]any](b, "SetClauses", data.SetClauses)
 }
 
 // Where adds WHERE expressions to the query.
-func (b UpdateBuilder) Where(pred interface{}, args ...interface{}) UpdateBuilder {
-	return Append(b, "WhereParts", Expr(pred, args...)).(UpdateBuilder)
+func (b UpdateBuilder) Where(pred any, args ...any) UpdateBuilder {
+	return Append[UpdateBuilder, N1qlizer](b, "WhereParts", Expr(pred, args...))
 }
 
 // Limit sets a LIMIT clause on the query.
 func (b UpdateBuilder) Limit(limit uint64) UpdateBuilder {
-	return Set(b, "Limit", fmt.Sprintf("%d", limit)).(UpdateBuilder)
+	return Set[UpdateBuilder, string](b, "Limit", fmt.Sprintf("%d", limit))
 }
 
-// Offset sets an OFFSET clause on the query.
+// Offset sets a OFFSET clause on the query.
 func (b UpdateBuilder) Offset(offset uint64) UpdateBuilder {
-	return Set(b, "Offset", fmt.Sprintf("%d", offset)).(UpdateBuilder)
+	return Set[UpdateBuilder, string](b, "Offset", fmt.Sprintf("%d", offset))
 }
 
-// Suffix adds an expression to the end of the query.
-func (b UpdateBuilder) Suffix(sql string, args ...interface{}) UpdateBuilder {
+// Suffix adds an expression to the end of the query
+func (b UpdateBuilder) Suffix(sql string, args ...any) UpdateBuilder {
 	return b.SuffixExpr(Expr(sql, args...))
 }
 
-// SuffixExpr adds an expression to the end of the query.
+// SuffixExpr adds an expression to the end of the query
 func (b UpdateBuilder) SuffixExpr(expr N1qlizer) UpdateBuilder {
-	return Append(b, "Suffixes", expr).(UpdateBuilder)
+	return Append[UpdateBuilder, N1qlizer](b, "Suffixes", expr)
 }

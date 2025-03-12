@@ -26,5 +26,5 @@ func (b DeleteBuilder) ExecuteContext(ctx context.Context) (QueryResult, error) 
 
 // RunWithContext sets a Runner (like a Couchbase DB connection with Context support) to be used with e.g. ExecuteContext.
 func (b DeleteBuilder) RunWithContext(runner QueryRunnerContext) DeleteBuilder {
-	return setRunnerContext(b, runner).(DeleteBuilder)
+	return Set[DeleteBuilder, QueryRunnerContext](b, "RunWith", runner)
 }

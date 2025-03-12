@@ -14,10 +14,11 @@ import (
 	"fmt"
 )
 
-// Any is a shorthand for Go's verbose interface{} type.
-type Any interface{}
+// Any is an alias for 'any', provided for backward compatibility.
+// New code should use 'any' directly.
+type Any = any
 
-// A Map associates unique keys (type string) with values (type Any).
+// A Map associates unique keys (type string) with values (type any).
 type Map interface {
 	// IsNil returns true if the Map is empty
 	IsNil() bool
@@ -26,7 +27,7 @@ type Map interface {
 	// If the key didn't exist before, it's created; otherwise, the
 	// associated value is changed.
 	// This operation is O(log N) in the number of keys.
-	Set(key string, value Any) Map
+	Set(key string, value any) Map
 
 	// Delete returns a new map with the association for key, if any, removed.
 	// This operation is O(log N) in the number of keys.
@@ -35,14 +36,49 @@ type Map interface {
 	// Lookup returns the value associated with a key, if any.  If the key
 	// exists, the second return value is true; otherwise, false.
 	// This operation is O(log N) in the number of keys.
-	Lookup(key string) (Any, bool)
+	Lookup(key string) (any, bool)
 
 	// Size returns the number of key value pairs in the map.
 	// This takes O(1) time.
 	Size() int
 
 	// ForEach executes a callback on each key value pair in the map.
-	ForEach(f func(key string, val Any))
+	ForEach(f func(key string, val any))
+
+	// Keys returns a slice with all keys in this map.
+	// This operation is O(N) in the number of keys.
+	Keys() []string
+
+	String() string
+}
+
+// GenericMap is a generic version of Map that uses type parameters
+// to provide type safety for the values.
+type GenericMap[V any] interface {
+	// IsNil returns true if the Map is empty
+	IsNil() bool
+
+	// Set returns a new map in which key and value are associated.
+	// If the key didn't exist before, it's created; otherwise, the
+	// associated value is changed.
+	// This operation is O(log N) in the number of keys.
+	Set(key string, value V) GenericMap[V]
+
+	// Delete returns a new map with the association for key, if any, removed.
+	// This operation is O(log N) in the number of keys.
+	Delete(key string) GenericMap[V]
+
+	// Lookup returns the value associated with a key, if any.  If the key
+	// exists, the second return value is true; otherwise, false.
+	// This operation is O(log N) in the number of keys.
+	Lookup(key string) (V, bool)
+
+	// Size returns the number of key value pairs in the map.
+	// This takes O(1) time.
+	Size() int
+
+	// ForEach executes a callback on each key value pair in the map.
+	ForEach(f func(key string, val V))
 
 	// Keys returns a slice with all keys in this map.
 	// This operation is O(N) in the number of keys.
@@ -52,26 +88,26 @@ type Map interface {
 }
 
 // Immutable (i.e. persistent) associative array
-const childCount = 8
+const childCount = 2
 const shiftSize = 3
 
 type tree struct {
 	count    int
 	hash     uint64 // hash of the key (used for tree balancing)
 	key      string
-	value    Any
+	value    any
 	children [childCount]*tree
 }
 
-var nilMap = &tree{}
+var nilTree = &tree{}
 
 // Recursively set nilMap's subtrees to point at itself.
 // This eliminates all nil pointers in the map structure.
 // All map nodes are created by cloning this structure so
 // they avoid the problem too.
 func init() {
-	for i := range nilMap.children {
-		nilMap.children[i] = nilMap
+	for i := range nilTree.children {
+		nilTree.children[i] = nilTree
 	}
 }
 
@@ -79,11 +115,11 @@ func init() {
 // any type.
 // This is currently implemented as a path-copying binary tree.
 func NewMap() Map {
-	return nilMap
+	return nilTree
 }
 
 func (self *tree) IsNil() bool {
-	return self == nilMap
+	return self == nilTree
 }
 
 // clone returns an exact duplicate of a tree node
@@ -109,15 +145,16 @@ func hashKey(key string) uint64 {
 	return hash
 }
 
-// Set returns a new map similar to this one but with key and value
-// associated.  If the key didn't exist, it's created; otherwise, the
+// Set returns a new map in which key and value are associated.
+// If the key didn't exist before, it's created; otherwise, the
 // associated value is changed.
-func (self *tree) Set(key string, value Any) Map {
-	hash := hashKey(key)
-	return setLowLevel(self, hash, hash, key, value)
+// This operation is O(log N) in the number of keys.
+func (self *tree) Set(key string, value any) Map {
+	return setLowLevel(self, 0, hashKey(key), key, value)
 }
 
-func setLowLevel(self *tree, partialHash, hash uint64, key string, value Any) *tree {
+// setLowLevel is the internal implementation of Set.
+func setLowLevel(self *tree, partialHash, hash uint64, key string, value any) *tree {
 	if self == nil || self.IsNil() { // an empty tree is easy
 		m := &tree{}
 		m.count = 1
@@ -197,12 +234,12 @@ func deleteLowLevel(self *tree, partialHash, hash uint64) (*tree, bool) {
 
 	// we must delete our own node
 	if self.isLeaf() { // we have no children
-		return nilMap, true
+		return nilTree, true
 	}
 	/*
 	   if self.subtreeCount() == 1 { // only one subtree
 	       for _, t := range self.children {
-	           if t != nilMap {
+	           if t != nilTree {
 	               return t, true
 	           }
 	       }
@@ -238,11 +275,11 @@ func deleteLowLevel(self *tree, partialHash, hash uint64) (*tree, bool) {
 // was deleted and the tree left over after its deletion
 func (m *tree) deleteLeftmost() (*tree, *tree) {
 	if m.isLeaf() {
-		return m, nilMap
+		return m, nilTree
 	}
 
 	for i, t := range m.children {
-		if t != nil && t != nilMap {
+		if t != nil && t != nilTree {
 			deleted, child := t.deleteLeftmost()
 			newMap := m.clone()
 			newMap.children[i] = child
@@ -262,19 +299,22 @@ func (m *tree) isLeaf() bool {
 func (m *tree) subtreeCount() int {
 	count := 0
 	for _, t := range m.children {
-		if t != nilMap {
+		if t != nilTree {
 			count++
 		}
 	}
 	return count
 }
 
-func (m *tree) Lookup(key string) (Any, bool) {
-	hash := hashKey(key)
-	return lookupLowLevel(m, hash, hash)
+// Lookup returns the value associated with a key, if any.
+// If the key exists, the second return value is true; otherwise, false.
+// This operation is O(log N) in the number of keys.
+func (m *tree) Lookup(key string) (any, bool) {
+	return lookupLowLevel(m, 0, hashKey(key))
 }
 
-func lookupLowLevel(self *tree, partialHash, hash uint64) (Any, bool) {
+// lookupLowLevel is the internal implementation of Lookup.
+func lookupLowLevel(self *tree, partialHash, hash uint64) (any, bool) {
 	if self == nil || self.IsNil() { // an empty tree is easy
 		return nil, false
 	}
@@ -298,7 +338,8 @@ func (m *tree) Size() int {
 	return m.count
 }
 
-func (m *tree) ForEach(f func(key string, val Any)) {
+// ForEach executes a callback on each key value pair in the map.
+func (m *tree) ForEach(f func(key string, val any)) {
 	if m == nil || m.IsNil() {
 		return
 	}
@@ -308,7 +349,7 @@ func (m *tree) ForEach(f func(key string, val Any)) {
 
 	// children
 	for _, t := range m.children {
-		if t != nil && t != nilMap {
+		if t != nil && t != nilTree {
 			t.ForEach(f)
 		}
 	}
@@ -317,7 +358,7 @@ func (m *tree) ForEach(f func(key string, val Any)) {
 func (m *tree) Keys() []string {
 	keys := make([]string, m.Size())
 	i := 0
-	m.ForEach(func(k string, v Any) {
+	m.ForEach(func(k string, v any) {
 		keys[i] = k
 		i++
 	})

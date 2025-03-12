@@ -1,3 +1,3 @@
 module github.com/ceylanomer/n1qlizer
 
-go 1.14
+go 1.18

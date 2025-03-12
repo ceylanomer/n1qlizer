@@ -2,13 +2,10 @@ package n1qlizer
 
 import (
 	"reflect"
-	"sync"
 )
 
-var (
-	registry    = make(map[reflect.Type]reflect.Type)
-	registryMux sync.RWMutex
-)
+// DEPRECATED: Bu dosya eski kod ile uyumluluk için korunmuştur.
+// Yeni kodlar registry_impl.go dosyasındaki fonksiyonları kullanmalıdır.
 
 // RegisterType maps the given builderType to a structType.
 // This mapping affects the type of slices returned by Get and is required for
@@ -19,41 +16,24 @@ var (
 // RegisterType will panic if builderType's underlying type is not Builder or
 // if structType's Kind is not Struct.
 func RegisterType(builderType reflect.Type, structType reflect.Type) *reflect.Value {
-	registryMux.Lock()
-	defer registryMux.Unlock()
-	structType.NumField() // Panic if structType is not a struct
-	registry[builderType] = structType
-	emptyValue := emptyBuilderValue.Convert(builderType)
-	return &emptyValue
+	return RegisterBuilderType(builderType, structType)
 }
 
 // Register wraps RegisterType, taking instances instead of Types.
 //
 // Returns an empty instance of the registered builder type which can be used
 // as the initial value for builder expressions. See example.
-func Register(builderProto, structProto interface{}) interface{} {
-	empty := RegisterType(
-		reflect.TypeOf(builderProto),
-		reflect.TypeOf(structProto),
-	).Interface()
-	return empty
+func Register(builderProto any, structProto any) any {
+	return RegisterBuilder(builderProto, structProto)
 }
 
-func getBuilderStructType(builderType reflect.Type) *reflect.Type {
-	registryMux.RLock()
-	defer registryMux.RUnlock()
-	structType, ok := registry[builderType]
-	if !ok {
-		return nil
-	}
-	return &structType
+// getBuilderStructType returns the registered struct type for a given builder type
+func getBuilderStructType(builderType reflect.Type) reflect.Type {
+	return GetBuilderStructType(builderType)
 }
 
+// newBuilderStruct returns a new value with the same type as a struct registered for
+// the given Builder type.
 func newBuilderStruct(builderType reflect.Type) *reflect.Value {
-	structType := getBuilderStructType(builderType)
-	if structType == nil {
-		return nil
-	}
-	newStruct := reflect.New(*structType).Elem()
-	return &newStruct
+	return NewBuilderStruct(builderType)
 }

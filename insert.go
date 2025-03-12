@@ -15,12 +15,12 @@ type insertData struct {
 	Options           []string
 	Into              string
 	Columns           []string
-	Values            [][]interface{}
+	Values            [][]any
 	Suffixes          []N1qlizer
-	SetMap            map[string]interface{}
+	SetMap            map[string]any
 }
 
-func (d *insertData) ToN1ql() (sqlStr string, args []interface{}, err error) {
+func (d *insertData) ToN1ql() (sqlStr string, args []any, err error) {
 	sqlStr, args, err = d.toN1qlRaw()
 	if err != nil {
 		return
@@ -30,7 +30,7 @@ func (d *insertData) ToN1ql() (sqlStr string, args []interface{}, err error) {
 	return
 }
 
-func (d *insertData) toN1qlRaw() (sqlStr string, args []interface{}, err error) {
+func (d *insertData) toN1qlRaw() (sqlStr string, args []any, err error) {
 	if len(d.Into) == 0 {
 		err = fmt.Errorf("insert statements must specify a table")
 		return
@@ -141,44 +141,36 @@ func init() {
 	Register(InsertBuilder{}, insertData{})
 }
 
-// Format methods
-
-// PlaceholderFormat sets PlaceholderFormat (e.g. Dollar) for the query.
+// PlaceholderFormat sets PlaceholderFormat (e.g. Question or Dollar) for the
+// query.
 func (b InsertBuilder) PlaceholderFormat(f PlaceholderFormat) InsertBuilder {
-	return Set(b, "PlaceholderFormat", f).(InsertBuilder)
+	return Set[InsertBuilder, PlaceholderFormat](b, "PlaceholderFormat", f)
 }
 
-// Runner methods
-
-// RunWith sets a Runner (like Couchbase DB connection) to be used with e.g. Execute.
+// RunWith sets a Runner (like a Couchbase DB connection) to be used with e.g. Execute.
 func (b InsertBuilder) RunWith(runner QueryRunner) InsertBuilder {
-	return Set(b, "RunWith", runner).(InsertBuilder)
+	return Set[InsertBuilder, QueryRunner](b, "RunWith", runner)
 }
 
-// Execute builds and sends the query to the runner set by RunWith.
+// Execute builds and executes the query.
 func (b InsertBuilder) Execute() (QueryResult, error) {
 	data := GetStruct(b).(insertData)
-
 	if data.RunWith == nil {
 		return nil, RunnerNotSet
 	}
-
-	query, args, err := data.ToN1ql()
-	if err != nil {
-		return nil, err
-	}
-
-	return data.RunWith.Execute(query, args...)
+	return ExecuteWith(data.RunWith, b)
 }
 
-// ToN1ql builds the query into a N1QL string and args.
-func (b InsertBuilder) ToN1ql() (string, []interface{}, error) {
+// ToN1ql builds the query into a N1QL string and bound args.
+func (b InsertBuilder) ToN1ql() (string, []any, error) {
 	data := GetStruct(b).(insertData)
 	return data.ToN1ql()
 }
 
-// MustN1ql builds the query into a N1QL string and args, and panics on error.
-func (b InsertBuilder) MustN1ql() (string, []interface{}) {
+// MustN1ql builds the query into a N1QL string and bound args.
+//
+// MustN1ql panics if there are any errors.
+func (b InsertBuilder) MustN1ql() (string, []any) {
 	sql, args, err := b.ToN1ql()
 	if err != nil {
 		panic(err)
@@ -186,57 +178,54 @@ func (b InsertBuilder) MustN1ql() (string, []interface{}) {
 	return sql, args
 }
 
-// Prefix adds an expression to the beginning of the query.
-func (b InsertBuilder) Prefix(sql string, args ...interface{}) InsertBuilder {
+// Prefix adds an expression to the beginning of the query
+func (b InsertBuilder) Prefix(sql string, args ...any) InsertBuilder {
 	return b.PrefixExpr(Expr(sql, args...))
 }
 
-// PrefixExpr adds an expression to the beginning of the query.
+// PrefixExpr adds an expression to the beginning of the query
 func (b InsertBuilder) PrefixExpr(expr N1qlizer) InsertBuilder {
-	return Append(b, "Prefixes", expr).(InsertBuilder)
+	return Append[InsertBuilder, N1qlizer](b, "Prefixes", expr)
 }
 
-// Options adds keyword options before the INTO clause of the query.
+// Options adds options to the query.
 func (b InsertBuilder) Options(options ...string) InsertBuilder {
-	return Extend(b, "Options", options).(InsertBuilder)
+	return Set[InsertBuilder, []string](b, "Options", options)
 }
 
 // Into sets the INTO clause of the query.
 func (b InsertBuilder) Into(into string) InsertBuilder {
-	return Set(b, "Into", into).(InsertBuilder)
+	return Set[InsertBuilder, string](b, "Into", into)
 }
 
-// Columns adds columns to the query.
+// Columns adds column names to the query.
 func (b InsertBuilder) Columns(columns ...string) InsertBuilder {
-	return Extend(b, "Columns", columns).(InsertBuilder)
+	return Set[InsertBuilder, []string](b, "Columns", columns)
 }
 
 // Values adds a single row's values to the query.
-func (b InsertBuilder) Values(values ...interface{}) InsertBuilder {
-	return Append(b, "Values", values).(InsertBuilder)
-}
-
-// SetMap set columns and values for insert in one step.
-func (b InsertBuilder) SetMap(clauses map[string]interface{}) InsertBuilder {
-	// Couchbase prefers working with JSON objects
-	// We'll convert the map to SET clauses
-	if GetStruct(b).(insertData).SetMap == nil {
-		return Set(b, "SetMap", clauses).(InsertBuilder)
-	}
-
+func (b InsertBuilder) Values(values ...any) InsertBuilder {
 	data := GetStruct(b).(insertData)
-	for key, value := range clauses {
-		data.SetMap[key] = value
+
+	if data.Values == nil {
+		data.Values = [][]any{}
 	}
-	return Set(b, "SetMap", data.SetMap).(InsertBuilder)
+
+	data.Values = append(data.Values, values)
+	return Set[InsertBuilder, [][]any](b, "Values", data.Values)
 }
 
-// Suffix adds an expression to the end of the query.
-func (b InsertBuilder) Suffix(sql string, args ...interface{}) InsertBuilder {
+// SetMap adds key-value pairs to set rather than a list of values.
+func (b InsertBuilder) SetMap(clauses map[string]any) InsertBuilder {
+	return Set[InsertBuilder, map[string]any](b, "SetMap", clauses)
+}
+
+// Suffix adds an expression to the end of the query
+func (b InsertBuilder) Suffix(sql string, args ...any) InsertBuilder {
 	return b.SuffixExpr(Expr(sql, args...))
 }
 
-// SuffixExpr adds an expression to the end of the query.
+// SuffixExpr adds an expression to the end of the query
 func (b InsertBuilder) SuffixExpr(expr N1qlizer) InsertBuilder {
-	return Append(b, "Suffixes", expr).(InsertBuilder)
+	return Append[InsertBuilder, N1qlizer](b, "Suffixes", expr)
 }

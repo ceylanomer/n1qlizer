@@ -25,7 +25,7 @@ type selectData struct {
 	UseKeys           string
 }
 
-func (d *selectData) ToN1ql() (sqlStr string, args []interface{}, err error) {
+func (d *selectData) ToN1ql() (sqlStr string, args []any, err error) {
 	sqlStr, args, err = d.toN1qlRaw()
 	if err != nil {
 		return
@@ -35,7 +35,7 @@ func (d *selectData) ToN1ql() (sqlStr string, args []interface{}, err error) {
 	return
 }
 
-func (d *selectData) toN1qlRaw() (sqlStr string, args []interface{}, err error) {
+func (d *selectData) toN1qlRaw() (sqlStr string, args []any, err error) {
 	if len(d.Columns) == 0 {
 		err = fmt.Errorf("select statements must have at least one result column")
 		return
@@ -138,57 +138,49 @@ func (d *selectData) toN1qlRaw() (sqlStr string, args []interface{}, err error) 
 	return
 }
 
-// SelectBuilder builds SQL SELECT statements.
+// SelectBuilder builds SELECT statements.
 type SelectBuilder Builder
 
 func init() {
 	Register(SelectBuilder{}, selectData{})
 }
 
-// Format methods
-
-// PlaceholderFormat sets PlaceholderFormat (e.g. Dollar) for the query.
+// PlaceholderFormat sets PlaceholderFormat (e.g. Question or Dollar) for the
+// query.
 func (b SelectBuilder) PlaceholderFormat(f PlaceholderFormat) SelectBuilder {
-	return Set(b, "PlaceholderFormat", f).(SelectBuilder)
+	return Set[SelectBuilder, PlaceholderFormat](b, "PlaceholderFormat", f)
 }
 
-// Runner methods
-
-// RunWith sets a Runner (like Couchbase DB connection) to be used with e.g. Execute.
+// RunWith sets a Runner (like a Couchbase DB connection) to be used with e.g. Execute.
 func (b SelectBuilder) RunWith(runner QueryRunner) SelectBuilder {
-	return Set(b, "RunWith", runner).(SelectBuilder)
+	return Set[SelectBuilder, QueryRunner](b, "RunWith", runner)
 }
 
-// Execute builds and sends the query to the runner set by RunWith.
+// Execute builds and executes the query.
 func (b SelectBuilder) Execute() (QueryResult, error) {
 	data := GetStruct(b).(selectData)
-
 	if data.RunWith == nil {
 		return nil, RunnerNotSet
 	}
-
-	query, args, err := data.ToN1ql()
-	if err != nil {
-		return nil, err
-	}
-
-	return data.RunWith.Execute(query, args...)
+	return ExecuteWith(data.RunWith, b)
 }
 
-// ToN1ql builds the query into a N1QL string and args.
-func (b SelectBuilder) ToN1ql() (string, []interface{}, error) {
+// ToN1ql builds the query into a N1QL string and bound args.
+func (b SelectBuilder) ToN1ql() (string, []any, error) {
 	data := GetStruct(b).(selectData)
 	return data.ToN1ql()
 }
 
-// toN1qlRaw builds the query into a N1QL string and args without placeholder replacement.
-func (b SelectBuilder) toN1qlRaw() (string, []interface{}, error) {
+// toN1qlRaw is used to generate N1QL for embedded usage in other queries.
+func (b SelectBuilder) toN1qlRaw() (string, []any, error) {
 	data := GetStruct(b).(selectData)
 	return data.toN1qlRaw()
 }
 
-// MustN1ql builds the query into a N1QL string and args, and panics on error.
-func (b SelectBuilder) MustN1ql() (string, []interface{}) {
+// MustN1ql builds the query into a N1QL string and bound args.
+//
+// MustN1ql panics if there are any errors.
+func (b SelectBuilder) MustN1ql() (string, []any) {
 	sql, args, err := b.ToN1ql()
 	if err != nil {
 		panic(err)
@@ -196,24 +188,24 @@ func (b SelectBuilder) MustN1ql() (string, []interface{}) {
 	return sql, args
 }
 
-// Prefix adds an expression to the beginning of the query.
-func (b SelectBuilder) Prefix(sql string, args ...interface{}) SelectBuilder {
+// Prefix adds an expression to the beginning of the query
+func (b SelectBuilder) Prefix(sql string, args ...any) SelectBuilder {
 	return b.PrefixExpr(Expr(sql, args...))
 }
 
-// PrefixExpr adds an expression to the beginning of the query.
+// PrefixExpr adds an expression to the very beginning of the query
 func (b SelectBuilder) PrefixExpr(expr N1qlizer) SelectBuilder {
-	return Append(b, "Prefixes", expr).(SelectBuilder)
+	return Append[SelectBuilder, N1qlizer](b, "Prefixes", expr)
 }
 
 // Distinct adds a DISTINCT clause to the query.
 func (b SelectBuilder) Distinct() SelectBuilder {
-	return Append(b, "Options", "DISTINCT").(SelectBuilder)
+	return b.Options("DISTINCT")
 }
 
-// Options adds additional query options to the query.
+// Options adds options to the query.
 func (b SelectBuilder) Options(options ...string) SelectBuilder {
-	return Extend(b, "Options", options).(SelectBuilder)
+	return Set[SelectBuilder, []string](b, "Options", options)
 }
 
 // Columns adds result columns to the query.
@@ -222,68 +214,71 @@ func (b SelectBuilder) Columns(columns ...string) SelectBuilder {
 	for _, str := range columns {
 		parts = append(parts, newPart(str))
 	}
-	return Extend(b, "Columns", parts).(SelectBuilder)
+	return Set[SelectBuilder, []N1qlizer](b, "Columns", parts)
 }
 
 // Column adds a result column to the query.
-// Unlike Columns, Column accepts args which will be bound to placeholders in the column string.
-func (b SelectBuilder) Column(column interface{}, args ...interface{}) SelectBuilder {
-	return Append(b, "Columns", Expr(column, args...)).(SelectBuilder)
+// Unlike Columns, Column accepts args which will be bound to placeholders in
+// the column string, for example:
+//
+//	.Column("IF(n_subscribers > ?, ?, ?)", 100, "HIGH", "LOW")
+func (b SelectBuilder) Column(column any, args ...any) SelectBuilder {
+	return Append[SelectBuilder, N1qlizer](b, "Columns", Expr(column, args...))
 }
 
 // From sets the FROM clause of the query.
 func (b SelectBuilder) From(from string) SelectBuilder {
-	return Set(b, "From", newPart(from)).(SelectBuilder)
+	return Set[SelectBuilder, N1qlizer](b, "From", newPart(from))
 }
 
 // UseKeys sets the USE KEYS clause of the query.
 func (b SelectBuilder) UseKeys(keys string) SelectBuilder {
-	return Set(b, "UseKeys", keys).(SelectBuilder)
+	return Set[SelectBuilder, string](b, "UseKeys", keys)
 }
 
-// FromSelect sets a subquery into the FROM clause.
+// FromSelect sets a subquery into the FROM clause of the query.
 func (b SelectBuilder) FromSelect(from SelectBuilder, alias string) SelectBuilder {
-	return Set(b, "From", Alias(from, alias)).(SelectBuilder)
+	return Set[SelectBuilder, N1qlizer](b, "From", Alias(from, alias))
 }
 
 // JoinClause adds a join clause to the query.
-func (b SelectBuilder) JoinClause(join string, args ...interface{}) SelectBuilder {
-	return Append(b, "Joins", Expr(join, args...)).(SelectBuilder)
+func (b SelectBuilder) JoinClause(join string, args ...any) SelectBuilder {
+	return Append[SelectBuilder, N1qlizer](b, "Joins", Expr(join, args...))
 }
 
 // Join adds a JOIN clause to the query.
-func (b SelectBuilder) Join(join string, rest ...interface{}) SelectBuilder {
+func (b SelectBuilder) Join(join string, rest ...any) SelectBuilder {
 	return b.JoinClause("JOIN "+join, rest...)
 }
 
 // LeftJoin adds a LEFT JOIN clause to the query.
-func (b SelectBuilder) LeftJoin(join string, rest ...interface{}) SelectBuilder {
+func (b SelectBuilder) LeftJoin(join string, rest ...any) SelectBuilder {
 	return b.JoinClause("LEFT JOIN "+join, rest...)
 }
 
 // RightJoin adds a RIGHT JOIN clause to the query.
-func (b SelectBuilder) RightJoin(join string, rest ...interface{}) SelectBuilder {
+func (b SelectBuilder) RightJoin(join string, rest ...any) SelectBuilder {
 	return b.JoinClause("RIGHT JOIN "+join, rest...)
 }
 
 // InnerJoin adds an INNER JOIN clause to the query.
-func (b SelectBuilder) InnerJoin(join string, rest ...interface{}) SelectBuilder {
+func (b SelectBuilder) InnerJoin(join string, rest ...any) SelectBuilder {
 	return b.JoinClause("INNER JOIN "+join, rest...)
 }
 
 // Where adds an expression to the WHERE clause of the query.
-func (b SelectBuilder) Where(pred interface{}, args ...interface{}) SelectBuilder {
-	return Append(b, "WhereParts", Expr(pred, args...)).(SelectBuilder)
+func (b SelectBuilder) Where(pred any, args ...any) SelectBuilder {
+	return Append[SelectBuilder, N1qlizer](b, "WhereParts", Expr(pred, args...))
 }
 
 // GroupBy adds GROUP BY expressions to the query.
 func (b SelectBuilder) GroupBy(groupBys ...string) SelectBuilder {
-	return Extend(b, "GroupBys", groupBys).(SelectBuilder)
+	return Set[SelectBuilder, []string](b, "GroupBys", groupBys)
 }
 
 // Having adds an expression to the HAVING clause of the query.
-func (b SelectBuilder) Having(pred interface{}, rest ...interface{}) SelectBuilder {
-	return Append(b, "HavingParts", Expr(pred, rest...)).(SelectBuilder)
+func (b SelectBuilder) Having(pred any, rest ...any) SelectBuilder {
+	return Append[SelectBuilder, N1qlizer](b, "HavingParts", Expr(pred, rest...))
 }
 
 // OrderBy adds ORDER BY expressions to the query.
@@ -292,30 +287,33 @@ func (b SelectBuilder) OrderBy(orderBys ...string) SelectBuilder {
 	for _, str := range orderBys {
 		parts = append(parts, newPart(str))
 	}
-	return Extend(b, "OrderByParts", parts).(SelectBuilder)
+	return Set[SelectBuilder, []N1qlizer](b, "OrderByParts", parts)
 }
 
-// OrderByClause adds ORDER BY expressions to the query with placeholders.
-func (b SelectBuilder) OrderByClause(pred interface{}, args ...interface{}) SelectBuilder {
-	return Append(b, "OrderByParts", Expr(pred, args...)).(SelectBuilder)
+// OrderByClause adds ORDER BY expressions to the query with a custom clause.
+//
+// This is a more flexible version of OrderBy, and can be used for complex
+// expressions like "ORDER BY field ASC NULLS FIRST".
+func (b SelectBuilder) OrderByClause(pred any, args ...any) SelectBuilder {
+	return Append[SelectBuilder, N1qlizer](b, "OrderByParts", Expr(pred, args...))
 }
 
 // Limit sets a LIMIT clause on the query.
 func (b SelectBuilder) Limit(limit uint64) SelectBuilder {
-	return Set(b, "Limit", fmt.Sprintf("%d", limit)).(SelectBuilder)
+	return Set[SelectBuilder, string](b, "Limit", fmt.Sprintf("%d", limit))
 }
 
 // Offset sets an OFFSET clause on the query.
 func (b SelectBuilder) Offset(offset uint64) SelectBuilder {
-	return Set(b, "Offset", fmt.Sprintf("%d", offset)).(SelectBuilder)
+	return Set[SelectBuilder, string](b, "Offset", fmt.Sprintf("%d", offset))
 }
 
-// Suffix adds an expression to the end of the query.
-func (b SelectBuilder) Suffix(sql string, args ...interface{}) SelectBuilder {
+// Suffix adds an expression to the end of the query
+func (b SelectBuilder) Suffix(sql string, args ...any) SelectBuilder {
 	return b.SuffixExpr(Expr(sql, args...))
 }
 
-// SuffixExpr adds an expression to the end of the query.
+// SuffixExpr adds an expression to the end of the query
 func (b SelectBuilder) SuffixExpr(expr N1qlizer) SelectBuilder {
-	return Append(b, "Suffixes", expr).(SelectBuilder)
+	return Append[SelectBuilder, N1qlizer](b, "Suffixes", expr)
 }

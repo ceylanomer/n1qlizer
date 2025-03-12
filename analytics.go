@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -27,7 +28,7 @@ type analyticsSelectData struct {
 	Suffixes          []N1qlizer
 }
 
-func (d *analyticsSelectData) ToN1ql() (sqlStr string, args []interface{}, err error) {
+func (d *analyticsSelectData) ToN1ql() (sqlStr string, args []any, err error) {
 	sqlStr, args, err = d.toN1qlRaw()
 	if err != nil {
 		return
@@ -37,7 +38,7 @@ func (d *analyticsSelectData) ToN1ql() (sqlStr string, args []interface{}, err e
 	return
 }
 
-func (d *analyticsSelectData) toN1qlRaw() (sqlStr string, args []interface{}, err error) {
+func (d *analyticsSelectData) toN1qlRaw() (sqlStr string, args []any, err error) {
 	if len(d.Columns) == 0 {
 		err = fmt.Errorf("select statements must have at least one result column")
 		return
@@ -68,6 +69,36 @@ func (d *analyticsSelectData) toN1qlRaw() (sqlStr string, args []interface{}, er
 		}
 	}
 
+	if len(d.LetsClause) > 0 {
+		sql.WriteString(" LET ")
+		isFirst := true
+		// sort keys for consistent output
+		keys := make([]string, 0, len(d.LetsClause))
+		for k := range d.LetsClause {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			expr := d.LetsClause[k]
+			if !isFirst {
+				sql.WriteString(", ")
+			}
+			isFirst = false
+
+			sql.WriteString(k)
+			sql.WriteString(" = ")
+
+			exprSql, exprArgs, err := expr.ToN1ql()
+			if err != nil {
+				return "", nil, err
+			}
+
+			sql.WriteString(exprSql)
+			args = append(args, exprArgs...)
+		}
+	}
+
 	if d.From != nil {
 		sql.WriteString(" FROM ")
 		args, err = buildClauses([]N1qlizer{d.From}, sql, "", args)
@@ -82,24 +113,6 @@ func (d *analyticsSelectData) toN1qlRaw() (sqlStr string, args []interface{}, er
 		if err != nil {
 			return
 		}
-	}
-
-	// LET clause specific to Analytics
-	if len(d.LetsClause) > 0 {
-		sql.WriteString(" LET ")
-
-		lets := make([]string, 0, len(d.LetsClause))
-		for varName, expr := range d.LetsClause {
-			exprSQL, exprArgs, err := expr.ToN1ql()
-			if err != nil {
-				return "", nil, err
-			}
-
-			lets = append(lets, fmt.Sprintf("%s = %s", varName, exprSQL))
-			args = append(args, exprArgs...)
-		}
-
-		sql.WriteString(strings.Join(lets, ", "))
 	}
 
 	if len(d.WhereParts) > 0 {
@@ -123,18 +136,17 @@ func (d *analyticsSelectData) toN1qlRaw() (sqlStr string, args []interface{}, er
 		}
 	}
 
-	// WINDOW clause specific to Analytics
-	if d.Window != "" {
-		sql.WriteString(" WINDOW ")
-		sql.WriteString(d.Window)
-	}
-
 	if len(d.OrderByParts) > 0 {
 		sql.WriteString(" ORDER BY ")
 		args, err = buildClauses(d.OrderByParts, sql, ", ", args)
 		if err != nil {
 			return
 		}
+	}
+
+	if len(d.Window) > 0 {
+		sql.WriteString(" WINDOW ")
+		sql.WriteString(d.Window)
 	}
 
 	if len(d.Limit) > 0 {
@@ -166,45 +178,35 @@ func init() {
 	Register(AnalyticsSelectBuilder{}, analyticsSelectData{})
 }
 
-// Format methods
-
-// PlaceholderFormat sets PlaceholderFormat (e.g. Dollar) for the query.
+// PlaceholderFormat sets PlaceholderFormat (e.g. Question or Dollar) for the
+// query.
 func (b AnalyticsSelectBuilder) PlaceholderFormat(f PlaceholderFormat) AnalyticsSelectBuilder {
-	return Set(b, "PlaceholderFormat", f).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, PlaceholderFormat](b, "PlaceholderFormat", f)
 }
 
-// Runner methods
-
-// RunWith sets a Runner (like Couchbase DB connection) to be used with e.g. Execute.
+// RunWith sets a Runner (like a Couchbase DB connection) to be used with e.g. Execute.
 func (b AnalyticsSelectBuilder) RunWith(runner QueryRunner) AnalyticsSelectBuilder {
-	return Set(b, "RunWith", runner).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, QueryRunner](b, "RunWith", runner)
 }
 
-// RunWithContext sets a Runner (like a Couchbase DB connection with Context support) to be used with e.g. ExecuteContext.
+// RunWithContext sets a QueryRunnerContext (like a Couchbase DB connection with context methods)
+// to be used with e.g. ExecuteContext.
 func (b AnalyticsSelectBuilder) RunWithContext(runner QueryRunnerContext) AnalyticsSelectBuilder {
-	return setRunnerContext(b, runner).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, QueryRunner](b, "RunWith", runner)
 }
 
-// Execute builds and sends the query to the runner set by RunWith.
+// Execute builds and executes the query.
 func (b AnalyticsSelectBuilder) Execute() (QueryResult, error) {
 	data := GetStruct(b).(analyticsSelectData)
-
 	if data.RunWith == nil {
 		return nil, RunnerNotSet
 	}
-
-	query, args, err := data.ToN1ql()
-	if err != nil {
-		return nil, err
-	}
-
-	return data.RunWith.Execute(query, args...)
+	return ExecuteWith(data.RunWith, b)
 }
 
-// ExecuteContext builds and executes the query with the context and runner set by RunWith.
+// ExecuteContext builds and executes the query using the provided context.
 func (b AnalyticsSelectBuilder) ExecuteContext(ctx context.Context) (QueryResult, error) {
 	data := GetStruct(b).(analyticsSelectData)
-
 	if data.RunWith == nil {
 		return nil, RunnerNotSet
 	}
@@ -214,22 +216,19 @@ func (b AnalyticsSelectBuilder) ExecuteContext(ctx context.Context) (QueryResult
 		return nil, RunnerNotQueryRunnerContext
 	}
 
-	query, args, err := data.ToN1ql()
-	if err != nil {
-		return nil, err
-	}
-
-	return runner.ExecuteContext(ctx, query, args...)
+	return ExecuteContextWith(ctx, runner, b)
 }
 
-// ToN1ql builds the query into a N1QL string and args.
-func (b AnalyticsSelectBuilder) ToN1ql() (string, []interface{}, error) {
+// ToN1ql builds the query into a N1QL string and bound args.
+func (b AnalyticsSelectBuilder) ToN1ql() (string, []any, error) {
 	data := GetStruct(b).(analyticsSelectData)
 	return data.ToN1ql()
 }
 
-// MustN1ql builds the query into a N1QL string and args, and panics on error.
-func (b AnalyticsSelectBuilder) MustN1ql() (string, []interface{}) {
+// MustN1ql builds the query into a N1QL string and bound args.
+//
+// MustN1ql panics if there are any errors.
+func (b AnalyticsSelectBuilder) MustN1ql() (string, []any) {
 	sql, args, err := b.ToN1ql()
 	if err != nil {
 		panic(err)
@@ -237,90 +236,67 @@ func (b AnalyticsSelectBuilder) MustN1ql() (string, []interface{}) {
 	return sql, args
 }
 
-// Query building methods
-
 // Columns adds result columns to the query.
 func (b AnalyticsSelectBuilder) Columns(columns ...string) AnalyticsSelectBuilder {
 	parts := make([]N1qlizer, 0, len(columns))
 	for _, str := range columns {
 		parts = append(parts, newPart(str))
 	}
-	return Extend(b, "Columns", parts).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, []N1qlizer](b, "Columns", parts)
 }
 
 // Column adds a result column to the query.
-func (b AnalyticsSelectBuilder) Column(column interface{}, args ...interface{}) AnalyticsSelectBuilder {
-	switch c := column.(type) {
-	case string:
-		return Append(b, "Columns", Expr(c, args...)).(AnalyticsSelectBuilder)
-	case N1qlizer:
-		return Append(b, "Columns", c).(AnalyticsSelectBuilder)
-	default:
-		// Convert to string representation as a fallback
-		return Append(b, "Columns", Expr(fmt.Sprintf("%v", column), args...)).(AnalyticsSelectBuilder)
-	}
+// Unlike Columns, Column accepts args which will be bound to placeholders in
+// the column string, for example:
+//
+//	.Column("IF(n_subscribers > ?, ?, ?)", 100, "HIGH", "LOW")
+func (b AnalyticsSelectBuilder) Column(column any, args ...any) AnalyticsSelectBuilder {
+	return Append[AnalyticsSelectBuilder, N1qlizer](b, "Columns", Expr(column, args...))
 }
 
 // From sets the FROM clause of the query.
 func (b AnalyticsSelectBuilder) From(from string) AnalyticsSelectBuilder {
-	return Set(b, "From", newPart(from)).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, N1qlizer](b, "From", newPart(from))
 }
 
-// Let adds a LET clause to the query, specific to Analytics.
-func (b AnalyticsSelectBuilder) Let(variable string, value interface{}) AnalyticsSelectBuilder {
+// Let adds a LET binding variable to the query.
+func (b AnalyticsSelectBuilder) Let(variable string, value any) AnalyticsSelectBuilder {
 	data := GetStruct(b).(analyticsSelectData)
+
 	if data.LetsClause == nil {
 		data.LetsClause = make(map[string]N1qlizer)
 	}
 
-	var valueExpr N1qlizer
+	var expr N1qlizer
 	switch v := value.(type) {
 	case N1qlizer:
-		valueExpr = v
+		expr = v
 	default:
-		// Use the direct value to work as expected by the tests
-		valueExpr = newPart(fmt.Sprintf("%v", value))
+		expr = Expr("?", value)
 	}
 
-	data.LetsClause[variable] = valueExpr
-
-	return Set(b, "LetsClause", data.LetsClause).(AnalyticsSelectBuilder)
+	data.LetsClause[variable] = expr
+	return Set[AnalyticsSelectBuilder, map[string]N1qlizer](b, "LetsClause", data.LetsClause)
 }
 
-// Window adds a WINDOW clause to the query, specific to Analytics.
+// Window sets the WINDOW clause for window functions.
 func (b AnalyticsSelectBuilder) Window(windowClause string) AnalyticsSelectBuilder {
-	return Set(b, "Window", windowClause).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, string](b, "Window", windowClause)
 }
 
 // Where adds an expression to the WHERE clause of the query.
-func (b AnalyticsSelectBuilder) Where(pred interface{}, args ...interface{}) AnalyticsSelectBuilder {
-	switch p := pred.(type) {
-	case string:
-		return Append(b, "WhereParts", Expr(p, args...)).(AnalyticsSelectBuilder)
-	case N1qlizer:
-		return Append(b, "WhereParts", p).(AnalyticsSelectBuilder)
-	default:
-		// Convert to string representation as a fallback
-		return Append(b, "WhereParts", Expr(fmt.Sprintf("%v", pred), args...)).(AnalyticsSelectBuilder)
-	}
+func (b AnalyticsSelectBuilder) Where(pred any, args ...any) AnalyticsSelectBuilder {
+	return Append[AnalyticsSelectBuilder, N1qlizer](b, "WhereParts", Expr(pred, args...))
 }
 
 // GroupBy adds GROUP BY expressions to the query.
 func (b AnalyticsSelectBuilder) GroupBy(groupBys ...string) AnalyticsSelectBuilder {
-	return Extend(b, "GroupBys", groupBys).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, []string](b, "GroupBys", groupBys)
 }
 
 // Having adds an expression to the HAVING clause of the query.
-func (b AnalyticsSelectBuilder) Having(pred interface{}, rest ...interface{}) AnalyticsSelectBuilder {
-	switch p := pred.(type) {
-	case string:
-		return Append(b, "HavingParts", Expr(p, rest...)).(AnalyticsSelectBuilder)
-	case N1qlizer:
-		return Append(b, "HavingParts", p).(AnalyticsSelectBuilder)
-	default:
-		// Convert to string representation as a fallback
-		return Append(b, "HavingParts", Expr(fmt.Sprintf("%v", pred), rest...)).(AnalyticsSelectBuilder)
-	}
+func (b AnalyticsSelectBuilder) Having(pred any, rest ...any) AnalyticsSelectBuilder {
+	return Append[AnalyticsSelectBuilder, N1qlizer](b, "HavingParts", Expr(pred, rest...))
 }
 
 // OrderBy adds ORDER BY expressions to the query.
@@ -329,17 +305,17 @@ func (b AnalyticsSelectBuilder) OrderBy(orderBys ...string) AnalyticsSelectBuild
 	for _, str := range orderBys {
 		parts = append(parts, newPart(str))
 	}
-	return Extend(b, "OrderByParts", parts).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, []N1qlizer](b, "OrderByParts", parts)
 }
 
 // Limit sets a LIMIT clause on the query.
 func (b AnalyticsSelectBuilder) Limit(limit uint64) AnalyticsSelectBuilder {
-	return Set(b, "Limit", fmt.Sprintf("%d", limit)).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, string](b, "Limit", fmt.Sprintf("%d", limit))
 }
 
 // Offset sets an OFFSET clause on the query.
 func (b AnalyticsSelectBuilder) Offset(offset uint64) AnalyticsSelectBuilder {
-	return Set(b, "Offset", fmt.Sprintf("%d", offset)).(AnalyticsSelectBuilder)
+	return Set[AnalyticsSelectBuilder, string](b, "Offset", fmt.Sprintf("%d", offset))
 }
 
 // AnalyticsSelect creates a new AnalyticsSelectBuilder for Couchbase Analytics queries.

@@ -210,7 +210,7 @@ func (b SelectBuilder) Nest(bucket string) SelectBuilder {
 
 // NestClause adds a NEST clause to the query
 func (b SelectBuilder) NestClause(nest NestClause) SelectBuilder {
-	return Append(b, "Joins", nest).(SelectBuilder)
+	return Append[SelectBuilder, NestClause](b, "Joins", nest)
 }
 
 // LeftNest adds a LEFT NEST clause to the query
@@ -220,7 +220,7 @@ func (b SelectBuilder) LeftNest(bucket string) SelectBuilder {
 
 // LeftNestClause adds a LEFT NEST clause to the query
 func (b SelectBuilder) LeftNestClause(nest LeftNestClause) SelectBuilder {
-	return Append(b, "Joins", nest).(SelectBuilder)
+	return Append[SelectBuilder, LeftNestClause](b, "Joins", nest)
 }
 
 // Unnest adds an UNNEST clause to the query
@@ -230,7 +230,7 @@ func (b SelectBuilder) Unnest(path string) SelectBuilder {
 
 // UnnestClause adds an UNNEST clause to the query
 func (b SelectBuilder) UnnestClause(unnest UnnestClause) SelectBuilder {
-	return Append(b, "Joins", unnest).(SelectBuilder)
+	return Append[SelectBuilder, UnnestClause](b, "Joins", unnest)
 }
 
 // LeftUnnest adds a LEFT UNNEST clause to the query
@@ -240,5 +240,5 @@ func (b SelectBuilder) LeftUnnest(path string) SelectBuilder {
 
 // LeftUnnestClause adds a LEFT UNNEST clause to the query
 func (b SelectBuilder) LeftUnnestClause(unnest LeftUnnestClause) SelectBuilder {
-	return Append(b, "Joins", unnest).(SelectBuilder)
+	return Append[SelectBuilder, LeftUnnestClause](b, "Joins", unnest)
 }

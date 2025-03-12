@@ -22,8 +22,20 @@ var (
 	emptyBuilderValue = reflect.ValueOf(EmptyBuilder)
 )
 
-func getBuilderMap(builder interface{}) Map {
-	b := convert(builder, Builder{}).(Builder)
+// getBuilderMap retrieves the Map from a builder interface.
+func getBuilderMap[T any](builder T) Map {
+	// Use reflection to convert the builder to Builder type
+	builderValue := reflect.ValueOf(builder)
+	builderType := builderValue.Type()
+
+	// Get the underlying Builder structure
+	var b Builder
+	if builderType.Kind() == reflect.Struct {
+		b = reflect.ValueOf(builder).Convert(reflect.TypeOf(Builder{})).Interface().(Builder)
+	} else {
+		// Handle pointer or other types if needed
+		panic("builder must be a struct type based on Builder")
+	}
 
 	if b.builderMap == nil {
 		return NewMap()
@@ -37,22 +49,26 @@ func getBuilderMap(builder interface{}) Map {
 //
 // Set (and all other functions taking a builder in this package) will panic if
 // the given builder's underlying type is not Builder.
-func Set(builder interface{}, name string, v interface{}) interface{} {
+func Set[T any, V any](builder T, name string, v V) T {
 	b := Builder{getBuilderMap(builder).Set(name, v)}
-	return convert(b, builder)
+
+	// Convert the Builder back to the original type T
+	result := reflect.ValueOf(b).Convert(reflect.TypeOf(builder)).Interface().(T)
+	return result
 }
 
 // Remove returns a copy of the given builder with the given named value unset.
-func Remove(builder interface{}, name string) interface{} {
+func Remove[T any](builder T, name string) T {
 	b := Builder{getBuilderMap(builder).Delete(name)}
-	return convert(b, builder)
+	result := reflect.ValueOf(b).Convert(reflect.TypeOf(builder)).Interface().(T)
+	return result
 }
 
 // Append returns a copy of the given builder with new value(s) appended to the
 // named list. If the value was previously unset or set with Set (even to a e.g.
 // slice values), the new value(s) will be appended to an empty list.
-func Append(builder interface{}, name string, vs ...interface{}) interface{} {
-	return Extend(builder, name, vs)
+func Append[T any, V any](builder T, name string, vs ...V) T {
+	return ExtendValues(builder, name, vs)
 }
 
 // Extend behaves like Append, except it takes a single slice or array value
@@ -62,7 +78,7 @@ func Append(builder interface{}, name string, vs ...interface{}) interface{} {
 // Extend accepts slices or arrays of any type.
 //
 // Extend will panic if the given value is not a slice, array, or nil.
-func Extend(builder interface{}, name string, vs interface{}) interface{} {
+func Extend[T any, V any](builder T, name string, vs []V) T {
 	if vs == nil {
 		return builder
 	}
@@ -77,13 +93,38 @@ func Extend(builder interface{}, name string, vs interface{}) interface{} {
 		list = NewList()
 	}
 
-	forEach(vs, func(v interface{}) {
+	for _, v := range vs {
+		list = list.Cons(v)
+	}
+
+	return Set(builder, name, list)
+}
+
+// ExtendValues is like Extend but allows passing any value that can be iterated using reflection.
+// Used for backward compatibility.
+func ExtendValues[T any](builder T, name string, vs any) T {
+	if vs == nil {
+		return builder
+	}
+
+	maybeList, ok := getBuilderMap(builder).Lookup(name)
+
+	var list List
+	if ok {
+		list, ok = maybeList.(List)
+	}
+	if !ok {
+		list = NewList()
+	}
+
+	forEachReflect(vs, func(v any) {
 		list = list.Cons(v)
 	})
 
 	return Set(builder, name, list)
 }
 
+// listToSlice converts a List to a slice of the specified array type.
 func listToSlice(list List, arrayType reflect.Type) reflect.Value {
 	size := list.Size()
 	slice := reflect.MakeSlice(arrayType, size, size)
@@ -95,129 +136,128 @@ func listToSlice(list List, arrayType reflect.Type) reflect.Value {
 	return slice
 }
 
-var anyArrayType = reflect.TypeOf([]interface{}{})
+var anyArrayType = reflect.TypeOf([]any{})
+
+// getComponentType gets the type of a registered struct field for this builder type
+func getComponentType(builderType reflect.Type, name string) reflect.Type {
+	structType := GetBuilderStructType(builderType)
+	if structType == nil {
+		return nil
+	}
+
+	field, ok := structType.FieldByName(name)
+	if !ok {
+		return nil
+	}
+
+	if field.Type.Kind() == reflect.Slice {
+		return field.Type.Elem()
+	}
+
+	return nil
+}
+
+// scanStruct populates a struct value with data from a builder
+func scanStruct[T any](builder T, structVal *reflect.Value) any {
+	getBuilderMap(builder).ForEach(func(name string, val any) {
+		if ast.IsExported(name) {
+			field := structVal.FieldByName(name)
+			if field.IsValid() && field.CanSet() {
+				// handle lists -> slices
+				list, ok := val.(List)
+				if ok {
+					val = listToSlice(list, field.Type()).Interface()
+				}
+
+				v := reflect.ValueOf(val)
+				field.Set(v)
+			}
+		}
+	})
+	return structVal.Interface()
+}
 
 // Get retrieves a single named value from the given builder.
-// If the value has not been set, it returns (nil, false). Otherwise, it will
-// return (value, true).
 //
-// If the named value was last set with Append or Extend, the returned value
-// will be a slice. If the given Builder has been registered with Register or
-// RegisterType and the given name is an exported field of the registered
-// struct, the returned slice will have the same type as that field. Otherwise
-// the slice will have type []interface{}. It will panic if the given name is a
-// registered struct's exported field and the value set on the Builder is not
-// assignable to the field.
-func Get(builder interface{}, name string) (interface{}, bool) {
+// If the value was set with Append or Extend, the result will be a slice of the
+// same concrete type as was appended to the list.
+//
+// Get will panic when getting a key that was set with Append or Extend and the
+// types of values in the list don't match. Get will also panic if a value was
+// set with Set using a type derived from a registered struct's exported field
+// and the value set on the Builder is not assignable to the field.
+func Get[T any](builder T, name string) (any, bool) {
 	val, ok := getBuilderMap(builder).Lookup(name)
 	if !ok {
 		return nil, false
 	}
 
-	list, isList := val.(List)
-	if isList {
-		arrayType := anyArrayType
-
-		if ast.IsExported(name) {
-			structType := getBuilderStructType(reflect.TypeOf(builder))
-			if structType != nil {
-				field, ok := (*structType).FieldByName(name)
-				if ok {
-					arrayType = field.Type
-				}
-			}
+	// dereference list values to slices
+	list, ok := val.(List)
+	if ok {
+		// Check the concrete type of the list
+		// TODO: Implement proper generic handling for lists
+		ct := getComponentType(reflect.TypeOf(builder), name)
+		if ct != nil {
+			arrayType := reflect.SliceOf(ct)
+			val = listToSlice(list, arrayType).Interface()
+		} else {
+			val = listToSlice(list, anyArrayType).Interface()
 		}
-
-		val = listToSlice(list, arrayType).Interface()
 	}
 
 	return val, true
 }
 
-// GetMap returns a map[string]interface{} of the values set in the given
-// builder.
+// GetMap returns a copy of the builder's underlying map of values.
+//
+// If any values were appended with Append or Extend, the value in the map will
+// be the equivalent slice or array.
 //
 // See notes on Get regarding returned slices.
-func GetMap(builder interface{}) map[string]interface{} {
+func GetMap[T any](builder T) map[string]any {
 	m := getBuilderMap(builder)
-	structType := getBuilderStructType(reflect.TypeOf(builder))
+	structType := GetBuilderStructType(reflect.TypeOf(builder))
+	result := map[string]any{}
 
-	ret := make(map[string]interface{}, m.Size())
-
-	m.ForEach(func(name string, val Any) {
-		list, isList := val.(List)
-		if isList {
-			arrayType := anyArrayType
-
+	m.ForEach(func(name string, val any) {
+		// dereference list values to slices
+		list, ok := val.(List)
+		if ok {
+			// use the struct field type if we have it
+			var arrayType reflect.Type = anyArrayType
 			if structType != nil {
-				field, ok := (*structType).FieldByName(name)
-				if ok {
-					arrayType = field.Type
+				if field, ok := structType.FieldByName(name); ok {
+					if field.Type.Kind() == reflect.Slice {
+						arrayType = field.Type
+					}
 				}
 			}
-
 			val = listToSlice(list, arrayType).Interface()
 		}
-
-		ret[name] = val
+		result[name] = val
 	})
 
-	return ret
+	return result
 }
 
-// GetStruct builds a new struct from the given registered builder.
-// It will return nil if the given builder's type has not been registered with
-// Register or RegisterValue.
-//
-// All values set on the builder with names that start with an uppercase letter
-// (i.e. which would be exported if they were identifiers) are assigned to the
-// corresponding exported fields of the struct.
+// GetStruct returns a new value with the same type as a struct registered for
+// the given Builder type with field values taken from the builder.
 //
 // GetStruct will panic if any of these "exported" values are not assignable to
 // their corresponding struct fields.
-func GetStruct(builder interface{}) interface{} {
-	structVal := newBuilderStruct(reflect.TypeOf(builder))
+func GetStruct[T any](builder T) any {
+	structVal := NewBuilderStruct(reflect.TypeOf(builder))
 	if structVal == nil {
 		return nil
 	}
 	return scanStruct(builder, structVal)
 }
 
-// GetStructLike builds a new struct from the given builder with the same type
-// as the given struct.
-//
-// All values set on the builder with names that start with an uppercase letter
-// (i.e. which would be exported if they were identifiers) are assigned to the
-// corresponding exported fields of the struct.
-//
-// ScanStruct will panic if any of these "exported" values are not assignable to
+// GetStructLike will panic if any of these "exported" values are not assignable to
 // their corresponding struct fields.
-func GetStructLike(builder interface{}, strct interface{}) interface{} {
+func GetStructLike[T any, S any](builder T, strct S) S {
 	structVal := reflect.New(reflect.TypeOf(strct)).Elem()
-	return scanStruct(builder, &structVal)
-}
-
-func scanStruct(builder interface{}, structVal *reflect.Value) interface{} {
-	getBuilderMap(builder).ForEach(func(name string, val Any) {
-		if ast.IsExported(name) {
-			field := structVal.FieldByName(name)
-
-			var value reflect.Value
-			switch v := val.(type) {
-			case nil:
-				switch field.Kind() {
-				case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
-					value = reflect.Zero(field.Type())
-				}
-				// nil is not valid for this Type; Set will panic
-			case List:
-				value = listToSlice(v, field.Type())
-			default:
-				value = reflect.ValueOf(val)
-			}
-			field.Set(value)
-		}
-	})
-
-	return structVal.Interface()
+	result := scanStruct(builder, &structVal)
+	return result.(S)
 }

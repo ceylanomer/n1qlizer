@@ -209,7 +209,7 @@ func TestAnalyticsSupport(t *testing.T) {
 			t.Errorf("SQL does not contain correct SELECT: %s", sql)
 		}
 
-		if !contains(sql, "LET minAge = 18") {
+		if !contains(sql, "LET minAge = ?") {
 			t.Errorf("SQL does not contain LET clause: %s", sql)
 		}
 
@@ -229,7 +229,7 @@ func TestAnalyticsSupport(t *testing.T) {
 			t.Errorf("SQL does not contain ORDER BY clause: %s", sql)
 		}
 
-		if len(args) != 2 || args[0] != 18 || args[1] != 5 {
+		if len(args) != 3 || args[0] != 18 || args[1] != 18 || args[2] != 5 {
 			t.Errorf("Wrong args: %+v", args)
 		}
 	})

@@ -14,14 +14,14 @@ type upsertData struct {
 	Options           []string
 	Into              string
 	Key               string
-	Value             interface{}
+	Value             any
 	Columns           []string
-	Values            [][]interface{}
+	Values            [][]any
 	Suffixes          []N1qlizer
-	SetMap            map[string]interface{}
+	SetMap            map[string]any
 }
 
-func (d *upsertData) ToN1ql() (sqlStr string, args []interface{}, err error) {
+func (d *upsertData) ToN1ql() (sqlStr string, args []any, err error) {
 	sqlStr, args, err = d.toN1qlRaw()
 	if err != nil {
 		return
@@ -31,7 +31,7 @@ func (d *upsertData) ToN1ql() (sqlStr string, args []interface{}, err error) {
 	return
 }
 
-func (d *upsertData) toN1qlRaw() (sqlStr string, args []interface{}, err error) {
+func (d *upsertData) toN1qlRaw() (sqlStr string, args []any, err error) {
 	if len(d.Into) == 0 {
 		err = fmt.Errorf("upsert statements must specify a bucket")
 		return
@@ -151,44 +151,36 @@ func init() {
 	Register(UpsertBuilder{}, upsertData{})
 }
 
-// Format methods
-
-// PlaceholderFormat sets PlaceholderFormat (e.g. Dollar) for the query.
+// PlaceholderFormat sets PlaceholderFormat (e.g. Question or Dollar) for the
+// query.
 func (b UpsertBuilder) PlaceholderFormat(f PlaceholderFormat) UpsertBuilder {
-	return Set(b, "PlaceholderFormat", f).(UpsertBuilder)
+	return Set[UpsertBuilder, PlaceholderFormat](b, "PlaceholderFormat", f)
 }
 
-// Runner methods
-
-// RunWith sets a Runner (like Couchbase DB connection) to be used with e.g. Execute.
+// RunWith sets a Runner (like a Couchbase DB connection) to be used with e.g. Execute.
 func (b UpsertBuilder) RunWith(runner QueryRunner) UpsertBuilder {
-	return Set(b, "RunWith", runner).(UpsertBuilder)
+	return Set[UpsertBuilder, QueryRunner](b, "RunWith", runner)
 }
 
-// Execute builds and sends the query to the runner set by RunWith.
+// Execute builds and executes the query.
 func (b UpsertBuilder) Execute() (QueryResult, error) {
 	data := GetStruct(b).(upsertData)
-
 	if data.RunWith == nil {
 		return nil, RunnerNotSet
 	}
-
-	query, args, err := data.ToN1ql()
-	if err != nil {
-		return nil, err
-	}
-
-	return data.RunWith.Execute(query, args...)
+	return ExecuteWith(data.RunWith, b)
 }
 
-// ToN1ql builds the query into a N1QL string and args.
-func (b UpsertBuilder) ToN1ql() (string, []interface{}, error) {
+// ToN1ql builds the query into a N1QL string and bound args.
+func (b UpsertBuilder) ToN1ql() (string, []any, error) {
 	data := GetStruct(b).(upsertData)
 	return data.ToN1ql()
 }
 
-// MustN1ql builds the query into a N1QL string and args, and panics on error.
-func (b UpsertBuilder) MustN1ql() (string, []interface{}) {
+// MustN1ql builds the query into a N1QL string and bound args.
+//
+// MustN1ql panics if there are any errors.
+func (b UpsertBuilder) MustN1ql() (string, []any) {
 	sql, args, err := b.ToN1ql()
 	if err != nil {
 		panic(err)
@@ -196,68 +188,61 @@ func (b UpsertBuilder) MustN1ql() (string, []interface{}) {
 	return sql, args
 }
 
-// Prefix adds an expression to the beginning of the query.
-func (b UpsertBuilder) Prefix(sql string, args ...interface{}) UpsertBuilder {
+// Prefix adds an expression to the beginning of the query
+func (b UpsertBuilder) Prefix(sql string, args ...any) UpsertBuilder {
 	return b.PrefixExpr(Expr(sql, args...))
 }
 
-// PrefixExpr adds an expression to the beginning of the query.
+// PrefixExpr adds an expression to the beginning of the query
 func (b UpsertBuilder) PrefixExpr(expr N1qlizer) UpsertBuilder {
-	return Append(b, "Prefixes", expr).(UpsertBuilder)
+	return Append[UpsertBuilder, N1qlizer](b, "Prefixes", expr)
 }
 
-// Options adds keyword options before the INTO clause of the query.
+// Options adds options to the query.
 func (b UpsertBuilder) Options(options ...string) UpsertBuilder {
-	return Extend(b, "Options", options).(UpsertBuilder)
+	return Set[UpsertBuilder, []string](b, "Options", options)
 }
 
 // Into sets the INTO clause of the query.
 func (b UpsertBuilder) Into(into string) UpsertBuilder {
-	return Set(b, "Into", into).(UpsertBuilder)
+	return Set[UpsertBuilder, string](b, "Into", into)
 }
 
-// Document sets the key and document value for upsert.
-// This is Couchbase-specific and allows direct insertion of a JSON document.
-func (b UpsertBuilder) Document(key string, value interface{}) UpsertBuilder {
-	b = Set(b, "Key", key).(UpsertBuilder)
-	return Set(b, "Value", value).(UpsertBuilder)
+// Document sets the document key and value for the UPSERT operation.
+// Specific to Couchbase, uses (KEY, VALUE) syntax.
+func (b UpsertBuilder) Document(key string, value any) UpsertBuilder {
+	b = Set[UpsertBuilder, string](b, "Key", key)
+	return Set[UpsertBuilder, any](b, "Value", value)
 }
 
-// Columns adds columns to the query.
+// Columns adds column names to the query.
 func (b UpsertBuilder) Columns(columns ...string) UpsertBuilder {
-	return Extend(b, "Columns", columns).(UpsertBuilder)
+	return Set[UpsertBuilder, []string](b, "Columns", columns)
 }
 
 // Values adds a single row's values to the query.
-func (b UpsertBuilder) Values(values ...interface{}) UpsertBuilder {
-	return Append(b, "Values", values).(UpsertBuilder)
-}
-
-// SetMap set columns and values for upsert in one step.
-func (b UpsertBuilder) SetMap(clauses map[string]interface{}) UpsertBuilder {
-	// Couchbase prefers working with JSON objects
-	// We'll convert the map to SET clauses
-	if GetStruct(b).(upsertData).SetMap == nil {
-		return Set(b, "SetMap", clauses).(UpsertBuilder)
-	}
-
+func (b UpsertBuilder) Values(values ...any) UpsertBuilder {
 	data := GetStruct(b).(upsertData)
-	if data.SetMap == nil {
-		data.SetMap = map[string]interface{}{}
+
+	if data.Values == nil {
+		data.Values = [][]any{}
 	}
 
-	for key, value := range clauses {
-		data.SetMap[key] = value
-	}
-	return Set(b, "SetMap", data.SetMap).(UpsertBuilder)
+	data.Values = append(data.Values, values)
+	return Set[UpsertBuilder, [][]any](b, "Values", data.Values)
 }
 
-// Suffix adds an expression to the end of the query.
-func (b UpsertBuilder) Suffix(sql string, args ...interface{}) UpsertBuilder {
+// SetMap adds key-value pairs to set rather than a list of values.
+func (b UpsertBuilder) SetMap(clauses map[string]any) UpsertBuilder {
+	return Set[UpsertBuilder, map[string]any](b, "SetMap", clauses)
+}
+
+// Suffix adds an expression to the end of the query
+func (b UpsertBuilder) Suffix(sql string, args ...any) UpsertBuilder {
 	return b.SuffixExpr(Expr(sql, args...))
 }
 
-// SuffixExpr adds an expression to the end of the query.
+// SuffixExpr adds an expression to the end of the query
 func (b UpsertBuilder) SuffixExpr(expr N1qlizer) UpsertBuilder {
-	return Append(b, "Suffixes", expr).(UpsertBuilder)
+	return Append[UpsertBuilder, N1qlizer](b, "Suffixes", expr)
 }

@@ -26,5 +26,5 @@ func (b InsertBuilder) ExecuteContext(ctx context.Context) (QueryResult, error) 
 
 // RunWithContext sets a Runner (like a Couchbase DB connection with Context support) to be used with e.g. ExecuteContext.
 func (b InsertBuilder) RunWithContext(runner QueryRunnerContext) InsertBuilder {
-	return setRunnerContext(b, runner).(InsertBuilder)
+	return Set[InsertBuilder, QueryRunnerContext](b, "RunWith", runner)
 }

@@ -9,12 +9,12 @@ import (
 
 type expr struct {
 	sql  string
-	args []interface{}
+	args []any
 }
 
 // Expr builds an expression from a SQL fragment and arguments.
 // The first argument should be a string, which may contain ? placeholders.
-func Expr(sql interface{}, args ...interface{}) N1qlizer {
+func Expr(sql any, args ...any) N1qlizer {
 	sqlStr, ok := sql.(string)
 	if !ok {
 		// For expressions like Eq, Lt, etc. which are N1qlizer instances
@@ -28,7 +28,7 @@ func Expr(sql interface{}, args ...interface{}) N1qlizer {
 	return expr{sql: sqlStr, args: args}
 }
 
-func (e expr) ToN1ql() (string, []interface{}, error) {
+func (e expr) ToN1ql() (string, []any, error) {
 	// Check if we have enough arguments for placeholders
 	placeholderCount := strings.Count(e.sql, "?")
 	if placeholderCount > len(e.args) {
@@ -51,7 +51,7 @@ func (e expr) ToN1ql() (string, []interface{}, error) {
 
 	// Handle N1qlizer arguments by substituting their SQL and args
 	buf := &strings.Builder{}
-	newArgs := make([]interface{}, 0, len(e.args))
+	newArgs := make([]any, 0, len(e.args))
 
 	argPos := 0
 	for i := 0; i < len(e.sql); i++ {
@@ -100,7 +100,7 @@ func Alias(expr N1qlizer, alias string) N1qlizer {
 	return aliasExpr{expr: expr, alias: alias}
 }
 
-func (e aliasExpr) ToN1ql() (string, []interface{}, error) {
+func (e aliasExpr) ToN1ql() (string, []any, error) {
 	sql, args, err := e.expr.ToN1ql()
 	if err != nil {
 		return "", nil, err
@@ -110,9 +110,9 @@ func (e aliasExpr) ToN1ql() (string, []interface{}, error) {
 }
 
 // Eq is an equality expression ("=").
-type Eq map[string]interface{}
+type Eq map[string]any
 
-func (eq Eq) ToN1ql() (sql string, args []interface{}, err error) {
+func (eq Eq) ToN1ql() (sql string, args []any, err error) {
 	if len(eq) == 0 {
 		// Empty Eq needs to be handled separately
 		return "", nil, nil
@@ -141,9 +141,9 @@ func (eq Eq) ToN1ql() (sql string, args []interface{}, err error) {
 }
 
 // NotEq is an inequality expression ("<>").
-type NotEq map[string]interface{}
+type NotEq map[string]any
 
-func (neq NotEq) ToN1ql() (sql string, args []interface{}, err error) {
+func (neq NotEq) ToN1ql() (sql string, args []any, err error) {
 	if len(neq) == 0 {
 		// Empty NotEq needs to be handled separately
 		return "", nil, nil
@@ -172,35 +172,35 @@ func (neq NotEq) ToN1ql() (sql string, args []interface{}, err error) {
 }
 
 // Lt is a less-than expression ("<").
-type Lt map[string]interface{}
+type Lt map[string]any
 
-func (lt Lt) ToN1ql() (sql string, args []interface{}, err error) {
+func (lt Lt) ToN1ql() (sql string, args []any, err error) {
 	return comparisonExpr(lt, "<")
 }
 
 // Lte is a less-than-or-equal expression ("<=").
-type Lte map[string]interface{}
+type Lte map[string]any
 
-func (lte Lte) ToN1ql() (sql string, args []interface{}, err error) {
+func (lte Lte) ToN1ql() (sql string, args []any, err error) {
 	return comparisonExpr(lte, "<=")
 }
 
 // Gt is a greater-than expression (">").
-type Gt map[string]interface{}
+type Gt map[string]any
 
-func (gt Gt) ToN1ql() (sql string, args []interface{}, err error) {
+func (gt Gt) ToN1ql() (sql string, args []any, err error) {
 	return comparisonExpr(gt, ">")
 }
 
 // Gte is a greater-than-or-equal expression (">=").
-type Gte map[string]interface{}
+type Gte map[string]any
 
-func (gte Gte) ToN1ql() (sql string, args []interface{}, err error) {
+func (gte Gte) ToN1ql() (sql string, args []any, err error) {
 	return comparisonExpr(gte, ">=")
 }
 
 // comparisonExpr is a helper function for creating comparison expressions.
-func comparisonExpr(m map[string]interface{}, op string) (sql string, args []interface{}, err error) {
+func comparisonExpr(m map[string]any, op string) (sql string, args []any, err error) {
 	if len(m) == 0 {
 		return "", nil, nil
 	}
@@ -228,11 +228,11 @@ func comparisonExpr(m map[string]interface{}, op string) (sql string, args []int
 }
 
 // equalityToN1ql generates SQL and args for an equality condition.
-func equalityToN1ql(key string, val interface{}) (sql string, args []interface{}, err error) {
+func equalityToN1ql(key string, val any) (sql string, args []any, err error) {
 	switch v := val.(type) {
 	case nil:
 		return fmt.Sprintf("%s IS NULL", key), args, nil
-	case []interface{}:
+	case []any:
 		if len(v) == 0 {
 			return "1=0", args, nil
 		}
@@ -249,16 +249,16 @@ func equalityToN1ql(key string, val interface{}) (sql string, args []interface{}
 		}
 		return fmt.Sprintf("%s = %s", key, vsql), vargs, nil
 	default:
-		return fmt.Sprintf("%s = ?", key), []interface{}{val}, nil
+		return fmt.Sprintf("%s = ?", key), []any{val}, nil
 	}
 }
 
 // inequalityToN1ql generates SQL and args for an inequality condition.
-func inequalityToN1ql(key string, val interface{}) (sql string, args []interface{}, err error) {
+func inequalityToN1ql(key string, val any) (sql string, args []any, err error) {
 	switch v := val.(type) {
 	case nil:
 		return fmt.Sprintf("%s IS NOT NULL", key), args, nil
-	case []interface{}:
+	case []any:
 		if len(v) == 0 {
 			return "1=1", args, nil
 		}
@@ -275,12 +275,12 @@ func inequalityToN1ql(key string, val interface{}) (sql string, args []interface
 		}
 		return fmt.Sprintf("%s <> %s", key, vsql), vargs, nil
 	default:
-		return fmt.Sprintf("%s <> ?", key), []interface{}{val}, nil
+		return fmt.Sprintf("%s <> ?", key), []any{val}, nil
 	}
 }
 
 // comparisonToN1ql generates SQL and args for a comparative condition using an operator.
-func comparisonToN1ql(key string, val interface{}, op string) (sql string, args []interface{}, err error) {
+func comparisonToN1ql(key string, val any, op string) (sql string, args []any, err error) {
 	if val == nil {
 		return "", nil, fmt.Errorf("cannot use %s operator with NULL value", op)
 	}
@@ -293,26 +293,26 @@ func comparisonToN1ql(key string, val interface{}, op string) (sql string, args 
 		}
 		return fmt.Sprintf("%s %s %s", key, op, vsql), vargs, nil
 	default:
-		return fmt.Sprintf("%s %s ?", key, op), []interface{}{val}, nil
+		return fmt.Sprintf("%s %s ?", key, op), []any{val}, nil
 	}
 }
 
 // And combines multiple expressions with the "AND" operator.
 type And []N1qlizer
 
-func (and And) ToN1ql() (string, []interface{}, error) {
+func (and And) ToN1ql() (string, []any, error) {
 	return andOrToN1ql(and, "AND")
 }
 
 // Or combines multiple expressions with the "OR" operator.
 type Or []N1qlizer
 
-func (or Or) ToN1ql() (string, []interface{}, error) {
+func (or Or) ToN1ql() (string, []any, error) {
 	return andOrToN1ql(or, "OR")
 }
 
 // andOrToN1ql is a helper function for generating AND/OR expressions.
-func andOrToN1ql(ex []N1qlizer, sep string) (sql string, args []interface{}, err error) {
+func andOrToN1ql(ex []N1qlizer, sep string) (sql string, args []any, err error) {
 	if len(ex) == 0 {
 		return "", nil, nil
 	}
